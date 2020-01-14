@@ -4,13 +4,14 @@ from pygame.sprite import Sprite, collide_rect
 import pyganim
 import os
 
-mixer.pre_init(44100, -16, 1, 512)
+mixer.pre_init()
 mixer.init()
-MOVE_SPEED = 7
-LIVES = 3
-JUMP_POWER = 10
+# Параметры персонажа
+MOVE_SPEED = 5
+JUMP_POWER = 8
 GRAVITY = 0.4
-BACKCOLOR = (30, 70, 130)
+BACKCOLOR = (30, 60, 130)
+# Параметры для анимации
 ANDELAY = 500
 ANIMATION_STAY = ['data/player/player_stay1.png',
                   'data/player/player_stay2.png']
@@ -22,16 +23,15 @@ ANIMATION_UPR = ['data/player/player_jumpr1.png',
                  'data/player/player_jumpr2.png']
 ANIMATION_UPL = ['data/player/player_jumpl1.png',
                  'data/player/player_jumpl2.png']
-WIDTH = 600
-HEIGHT = 600
-
+SLIME = ['data/mobs/slime1.png',
+         'data/mobs/slime2.png',
+         'data/mobs/slime3.png']
+WIDTH = 512
+HEIGHT = 512
 DISPLAY = (WIDTH, HEIGHT)
-DEPTH = 0
-FLAGS = 0
-CAMERA_SLACK = 30
 
 
-def load_image(name, colorkey=None):
+def load_image(name, colorkey=None): # Загрузка изображения
     fullname = os.path.join('data', name)
     image = pygame.image.load(fullname).convert()
     if colorkey is not None:
@@ -43,7 +43,7 @@ def load_image(name, colorkey=None):
     return image
 
 
-class Camera:
+class Camera: # Камера
     def __init__(self, camera_func, width, height):
         self.camera_func = camera_func
         self.state = pygame.Rect(0, 0, width, height)
@@ -68,7 +68,7 @@ def camera_func(camera, target_rect):
     return pygame.Rect(l, t, w, h)
 
 
-def load_level(filename):
+def load_level(filename):  # Загрузка уровня из текстового файла
     filename = "data/levels/" + filename
     with open(filename, 'r') as mapFile:
         level_map = [line.strip() for line in mapFile]
@@ -76,72 +76,91 @@ def load_level(filename):
     return level_map
 
 
+def sound_switch(sound, playing):
+    if playing:
+        sound.stop()
+        playing = False
+    else:
+        sound.play(-1)
+        playing = True
+    return playing
+
+
+# Список уровней
 levels = {0: load_level('map.txt'), 1: load_level('map2.txt')}
 
 
-class GameScene():
-    def __init__(self, levelno):
-        super(GameScene, self).__init__()
-        self.bg = Surface((32, 32))
-        self.bg.convert()
-        self.bg.fill(BACKCOLOR)
+class GameScene():  # Главный класс, тут будет игра
+    def __init__(self, levelno, sound, sound_play):
         up = left = right = False
         self.entities = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
         self.player = None
         self.platforms = []
-
         self.levelno = levelno
-
         level = levels[levelno]
+        self.sound_play = sound_play
+        self.sound = sound
         total_level_width = len(level[0]) * 32
         total_level_height = len(level) * 32
-
-        # build the level
+        if levelno == 0:
+            self.bg = load_image('fon1.png')
+        else:
+            self.bg = load_image('fon2.png')
         x = 0
         y = 0
-        for row in level:
+        for row in level:  # Генерация уровня
             for col in row:
-                if col == "G":
+                if col == "P":  # Игрок
+                    self.player = Player(x, y)
+                    self.entities.add(self.player)
+                    self.player.scene = self
+                if col == "G":  # Трава
                     p = Platform(x, y, 'platforms/grass.png')
                     self.platforms.append(p)
                     self.entities.add(p)
-                if col == "D":
+                if col == "D":  # Земля
                     p = Platform(x, y, 'platforms/dirt.png')
                     self.platforms.append(p)
                     self.entities.add(p)
-                if col == "B":
+                if col == "B":  # Кирпич
                     p = Platform(x, y, 'platforms/brick.png')
                     self.platforms.append(p)
                     self.entities.add(p)
-                if col == "E":
-                    e = ExitBlock(x, y, 'platforms/brick.png')
+                if col == "E":  # Переход на след. уровень
+                    e = ExitBlock(x, y, 'platforms/exit.png')
                     self.platforms.append(e)
                     self.entities.add(e)
-                if col == "M":
-                    m = MovingPlatform(x, y, 10, 1, 10, 1, 'platforms/longbrick.png')
+                if col == "*":  # Смертельный блок
+                    p = DeathPlatform(x, y, 'platforms/deathblock.png')
+                    self.platforms.append(p)
+                    self.entities.add(p)
+                if col == "M":  # Вправо-влево двигающаяся платформа
+                    m = MovingPlatform(x, y, 1, 0, 1, 0, 'platforms/brick.png')
                     self.platforms.append(m)
-                    self.entities.add(m)
-                if col == "*":
-                    m = DeathPlatform(x, y, 1, 6, 20 , 4)
+                    self.enemies.add(m)
+                if col == "m":  # Вверх-вниз двигающаяся платформа
+                    m = MovingPlatform(x, y, 0, 2, 0, 4, 'platforms/brick.png')
                     self.platforms.append(m)
-                    self.entities.add(m)
-                if col == "P":
-                    self.player = Player(x, y, self.levelno)
-                    self.entities.add(self.player)
-                    self.player.scene = self
+                    self.enemies.add(m)
+                if col == "S":  # Моб, который двигается вправо влево
+                    m = Mob(x, y, 1, 0, 1, 0, SLIME)
+                    self.platforms.append(m)
+                    self.enemies.add(m)
+                if col == "s":  # Моб, который двигается вверх-вниз
+                    m = Mob(x, y, 0, 4, 0, 3, SLIME)
+                    self.platforms.append(m)
+                    self.enemies.add(m)
                 x += 32
             y += 32
             x = 0
 
-        self.camera = Camera(camera_func, total_level_width, total_level_height)
+        self.camera = Camera(camera_func, total_level_width, total_level_height)  # Включаем камеру
         for e in self.enemies:
             self.entities.add(e)
 
     def render(self, screen):
-        for y in range(20):
-            for x in range(25):
-                screen.blit(self.bg, (x * 32, y * 32))
+        screen.blit(self.bg, (0, 0))
 
         for e in self.entities:
             screen.blit(e.image, self.camera.apply(e))
@@ -149,6 +168,7 @@ class GameScene():
     def update(self):
         pressed = pygame.key.get_pressed()
         up, left, right = [pressed[key] for key in (K_LEFT, K_RIGHT, K_UP)]
+
         self.player.update(up, left, right, self.platforms)
 
         for e in self.enemies:
@@ -156,27 +176,26 @@ class GameScene():
 
         self.camera.update(self.player)
 
-    def exit(self):
+    def exit(self):  # Если дошли до конца уровня загружаем новый или говорим о нашей победе
         if self.levelno+1 in levels:
-            self.manager.go_to(GameScene(self.levelno+1))
+            self.manager.go_to(GameScene(self.levelno+1, self.sound, self.sound_play))
         else:
             self.manager.go_to(YouWin())
 
     def handle_events(self, events):
         for e in events:
-            if e.type == KEYDOWN and e.key == K_ESCAPE:
-                self.manager.go_to(TitleScene(self.levelno))
+            if e.type == KEYDOWN and e.key == K_ESCAPE:  # Если нажали esc, выходим в меню
+                self.manager.go_to(Menu(self.levelno))
+            if e.type == KEYDOWN and e.key == K_s:
+                self.sound_play = sound_switch(self.sound, self.sound_play)
 
 
-class YouWin():
+class YouWin():  # Выводим если прошли последний уровень
     def __init__(self):
-        super(YouWin, self).__init__()
-        self.sfont = pygame.font.SysFont('Arial', 32)
+        self.bg = load_image('youwin.png')
 
     def render(self, screen):
-        screen.fill((0, 200, 0))
-        text1 = self.sfont.render('>>Press any button to restart game<<', True, (255, 255, 255))
-        screen.blit(text1, (200, 50))
+        screen.blit(self.bg, (0, 0))
 
     def update(self):
         pass
@@ -184,22 +203,19 @@ class YouWin():
     def handle_events(self, events):
         for e in events:
             if e.type == KEYDOWN:
-                self.manager.go_to(TitleScene())
+                self.manager.go_to(Menu())
 
 
-class TitleScene():
+class Menu():  # Главное меню
     def __init__(self, level=0):
-        super(TitleScene, self).__init__()
-        self.font = pygame.font.SysFont('Arial', 56)
-        self.sfont = pygame.font.SysFont('Arial', 32)
         self.level = level
+        self.sound_play = False
+        self.bg = load_image('Menu.png')
+        self.sound = pygame.mixer.Sound('data/sounds/Music by Stlasyx.ogg')
+        self.sound_play = sound_switch(self.sound, self.sound_play)
 
     def render(self, screen):
-        screen.fill((0, 200, 0))
-        text1 = self.font.render('Это игра', True, (255, 255, 255))
-        text2 = self.sfont.render('>> press space to start/continue <<', True, (255, 255, 255))
-        screen.blit(text1, (200, 50))
-        screen.blit(text2, (200, 350))
+        screen.blit(self.bg, (0, 0))
 
     def update(self):
         pass
@@ -207,19 +223,21 @@ class TitleScene():
     def handle_events(self, events):
         for e in events:
             if e.type == KEYDOWN and e.key == K_SPACE:
-                self.manager.go_to(GameScene(self.level))
+                self.manager.go_to(GameScene(self.level, self.sound, self.sound_play))
+            if e.type == KEYDOWN and e.key == K_s:
+                self.sound_play = sound_switch(self.sound, self.sound_play)
 
 
-class Manager():
+class Manager():  # Класс, который переключает сцены
     def __init__(self):
-        self.go_to(TitleScene())
+        self.go_to(Menu())
 
     def go_to(self, scene):
         self.scene = scene
         self.scene.manager = self
 
 
-def makeanim(anim_list, delay):
+def makeanim(anim_list, delay):  # Функция, которая создает анимацию
     boltAnim = []
     for anim in anim_list:
         boltAnim.append((anim, delay))
@@ -227,7 +245,46 @@ def makeanim(anim_list, delay):
     return Anim
 
 
-class Platform(Sprite):
+class Mob(Sprite):  # Моб
+    def __init__(self, x, y, left, up, maxlengthhor, maxlengthver, anim):
+        Sprite.__init__(self)
+        self.image = Surface((32, 32))
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+        self.image.set_colorkey(BACKCOLOR)
+        self.rect.x = x
+        self.rect.y = y
+        self.startX = x
+        self.startY = y
+        self.maxlengthhor = maxlengthhor
+        self.maxlengthver = maxlengthver
+        self.xvel = left
+        self.yvel = up
+        self.boltAnim = makeanim(anim, ANDELAY)
+        self.boltAnim.play()
+
+    def update(self, platforms):
+        self.image.fill(BACKCOLOR)
+        self.boltAnim.blit(self.image, (0, 0))
+        self.rect.y += self.yvel
+        self.rect.x += self.xvel
+
+        self.collide(platforms)
+
+        if self.startX - self.rect.x > self.maxlengthhor:
+            self.xvel = -self.xvel
+        if self.startY - self.rect.y > self.maxlengthver:
+            self.yvel = -self.yvel
+
+    def collide(self, platforms):
+        for pl in platforms:
+            if sprite.collide_rect(self, pl) and self != pl:
+                self.xvel = - self.xvel
+                self.yvel = - self.yvel
+
+
+class Platform(Sprite):  # Платформа по которым перемещается персонаж
     def __init__(self, x, y, pic):
         Sprite.__init__(self)
         self.image = load_image(pic)
@@ -236,19 +293,23 @@ class Platform(Sprite):
         self.rect.y = y
 
 
-class ExitBlock(Platform):
+class ExitBlock(Platform):  # Блок который переводит на следующий уровень
     def __init__(self, x, y, pic):
         Platform.__init__(self, x, y, pic)
-        self.image = load_image(pic)
+        self.image = load_image(pic, -1)
         self.image.convert()
-        self.rect = Rect(x, y, 32, 32)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
 
 
-class MovingPlatform(Sprite):
+class MovingPlatform(Sprite):  # Двигающаяся платформа
     def __init__(self, x, y, left, up, max_length_hor, max_length_ver, pic):
         Sprite.__init__(self)
         self.image = load_image(pic)
-        self.rect = Rect(x, y, 32, 32)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
         self.x = x
         self.y = y
         self.max_length_hor = max_length_hor
@@ -275,11 +336,10 @@ class MovingPlatform(Sprite):
                 self.yvel = - self.yvel
 
 
-class Player(Sprite):
-    def __init__(self, x, y, level):
+class Player(Sprite):  # Игрок
+    def __init__(self, x, y):
         Sprite.__init__(self)
         self.image = Surface((20, 32))
-        self.level = level
         self.startX = x
         self.startY = y
         self.xvel = 0
@@ -288,7 +348,7 @@ class Player(Sprite):
         self.rect.x = x
         self.rect.y = y
         self.onGround = False
-        self.image.set_colorkey(0, 0)
+        self.image.set_colorkey(BACKCOLOR)
 
         self.boltAnimStay = makeanim(ANIMATION_STAY, ANDELAY)
         self.boltAnimStay.play()
@@ -306,9 +366,9 @@ class Player(Sprite):
         self.boltAnimUpL.play()
 
     def update(self, left, right, up, platforms):
-        if self.rect.top > 1440 or self.rect.top < 0:
+        if self.rect.top > 1500 or self.rect.top < 0:
             self.die()
-        if self.rect.left > 1408 or self.rect.right < 0:
+        if self.rect.left > 5000 or self.rect.right < 0:
             self.die()
         if left:
             self.xvel = -MOVE_SPEED
@@ -323,7 +383,6 @@ class Player(Sprite):
             if not up:
                 self.image.fill(BACKCOLOR)
                 self.boltAnimStay.blit(self.image, (0.1, 0.1))
-
         if up:
             if self.onGround:
                 self.yvel = -JUMP_POWER
@@ -347,7 +406,7 @@ class Player(Sprite):
                 if isinstance(pl, ExitBlock):
                     self.scene.exit()
                     return False
-                if isinstance(pl, DeathPlatform):
+                if isinstance(pl, DeathPlatform) or isinstance(pl, Mob):
                     self.die()
                 if xvel > 0:
                     self.rect.right = pl.rect.left
@@ -361,55 +420,28 @@ class Player(Sprite):
                     self.rect.top = pl.rect.bottom
                     self.yvel = 0
 
-    def teleporting(self, goX, goY):
+    def teleport(self, goX, goY):
         self.rect.x = goX
         self.rect.y = goY
 
-    def die(self):
-        time.wait(50)
-        self.teleporting(self.startX, self.startY)
+    def die(self):  # Если игрок умирает, ждем немного и спавним его снова
+        time.wait(250)
+        self.teleport(self.startX, self.startY)
 
 
-class DeathPlatform(Sprite):
-    def __init__(self, x, y, left, up, max_length_hor, max_length_ver):
+class DeathPlatform(Sprite):  # Шипастая платформа
+    def __init__(self, x, y, pic):
         Sprite.__init__(self)
-        self.image = Surface((32, 32))
-        self.rect = Rect(x, y, 32, 32)
-        self.x = x  # начальные координаты
-        self.y = y
-        self.max_length_hor = max_length_hor
-        self.max_length_ver = max_length_ver
-        self.xvel = left
-        self.yvel = up
-        self.image.set_colorkey(Color(100, 0, 0))
-        self.boltAnim = makeanim(ANIMATION_STAY, ANDELAY)
-        self.boltAnim.play()
-
-    def update(self, platforms):
-        self.image.fill(Color(100, 0, 0))
-        self.boltAnim.blit(self.image, (0, 0))
-
-        self.rect.y += self.yvel
-        self.rect.x += self.xvel
-
-        self.collide(platforms)
-
-        if self.startX - self.rect.x > self.maxLengthLeft:
-            self.xvel = -self.xvel  # если прошли максимальное растояние, то идеи в обратную сторону
-        if self.startY - self.rect.y > self.maxLengthUp:
-            self.yvel = -self.yvel  # если прошли максимальное растояние, то идеи в обратную сторону, вертикаль
-
-    def collide(self, platforms):
-        for pl in platforms:
-            if sprite.collide_rect(self, pl) and self != pl:
-                self.xvel = - self.xvel
-                self.yvel = - self.yvel
+        self.image = load_image(pic, -1)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
 
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode(DISPLAY, FLAGS, DEPTH)
-    pygame.display.set_caption("Place name of your game here for moneh!!! :DDDDD")
+    screen = pygame.display.set_mode(DISPLAY, 0, 0)
+    pygame.display.set_caption("Bloxy adventure: Сделано для Яндекс Лицея")
     timer = pygame.time.Clock()
     running = True
 
@@ -417,7 +449,6 @@ def main():
 
     while running:
         timer.tick(60)
-
         if pygame.event.get(QUIT):
             running = False
             return
@@ -427,5 +458,5 @@ def main():
         pygame.display.flip()
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":  # Знаете, это был очень огромный опыт для меня.
+    main()  # Спасибо что посмотрели мою программу! :)
